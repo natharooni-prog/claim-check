@@ -82,6 +82,7 @@ def quote(body: dict):
     claim = body.get("claim")
     params = body.get("params") or {}
     if kind not in checkers.CHECKERS:
+        ledger.save_rejected_quote(kind, claim, "unknown kind")
         return JSONResponse(status_code=400, content={
             "checkable": False,
             "reason": "unknown kind %r; week-one kinds: %s"
@@ -89,6 +90,7 @@ def quote(body: dict):
             "cannot_prove": ["kind not supported"],
         })
     if claim is None:
+        ledger.save_rejected_quote(kind, claim, "claim is required")
         return JSONResponse(status_code=400, content={
             "checkable": False, "reason": "claim is required",
             "cannot_prove": ["no claim supplied"],
