@@ -33,6 +33,9 @@ def init():
         CREATE TABLE IF NOT EXISTS revenue(
             check_id TEXT PRIMARY KEY, amount_usd REAL, created INTEGER);
         CREATE TABLE IF NOT EXISTS nonces(nonce TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS rejected_quotes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, claim TEXT,
+            reason TEXT, created INTEGER);
         """
     )
     c.commit()
@@ -52,6 +55,23 @@ def save_quote(qid, kind, claim, params, price_usd, price_units, expires):
     )
     c.commit()
     c.close()
+
+
+def save_rejected_quote(kind, claim, reason):
+    """Log a quote request we could not serve (unknown kind, missing claim).
+    Never raises; observability must not break the request path."""
+    try:
+        c = _conn()
+        c.execute(
+            "INSERT INTO rejected_quotes(kind, claim, reason, created)"
+            " VALUES (?,?,?,?)",
+            (str(kind), None if claim is None else str(claim)[:500],
+             str(reason)[:200], now()),
+        )
+        c.commit()
+        c.close()
+    except Exception:
+        pass
 
 
 def get_quote(qid):
