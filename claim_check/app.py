@@ -76,13 +76,30 @@ def payment_required(request: Request, price_units: int, resource: str,
 
 # ---------------- quote ----------------
 
+def _caller_fingerprint(request: Request) -> str:
+    """Privacy-friendly distinct-caller id: sha256 of client IP + user-agent."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = fwd.split(",")[0].strip() if fwd \
+        else (request.client.host if request.client else "")
+    ua = request.headers.get("user-agent", "")
+    return hashlib.sha256(f"{ip}|{ua}".encode()).hexdigest()[:32]
+
+
+def _is_test_request(request: Request) -> bool:
+    """Our own/test traffic marks itself with X-ClaimCheck-Test: 1 so it can
+    be excluded from the experiment. Not documented in agent-facing docs."""
+    return request.headers.get("x-claimcheck-test", "").strip() == "1"
+
+
 @app.post("/v1/quote")
-def quote(body: dict):
+def quote(body: dict, request: Request):
     kind = body.get("kind")
     claim = body.get("claim")
     params = body.get("params") or {}
+    caller = _caller_fingerprint(request)
+    is_test = _is_test_request(request)
     if kind not in checkers.CHECKERS:
-        ledger.save_rejected_quote(kind, claim, "unknown kind")
+        ledger.save_rejected_quote(kind, claim, "unknown kind", caller, is_test)
         return JSONResponse(status_code=400, content={
             "checkable": False,
             "reason": "unknown kind %r; week-one kinds: %s"
@@ -90,7 +107,8 @@ def quote(body: dict):
             "cannot_prove": ["kind not supported"],
         })
     if claim is None:
-        ledger.save_rejected_quote(kind, claim, "claim is required")
+        ledger.save_rejected_quote(kind, claim, "claim is required",
+                                   caller, is_test)
         return JSONResponse(status_code=400, content={
             "checkable": False, "reason": "claim is required",
             "cannot_prove": ["no claim supplied"],
