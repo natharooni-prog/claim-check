@@ -35,9 +35,17 @@ def init():
         CREATE TABLE IF NOT EXISTS nonces(nonce TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS rejected_quotes(
             id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, claim TEXT,
-            reason TEXT, created INTEGER);
+            reason TEXT, caller_hash TEXT, is_test INTEGER DEFAULT 0,
+            created INTEGER);
         """
     )
+    # Migrate tables created before caller_hash/is_test existed.
+    _cols = [r[1] for r in
+             c.execute("PRAGMA table_info(rejected_quotes)").fetchall()]
+    if "caller_hash" not in _cols:
+        c.execute("ALTER TABLE rejected_quotes ADD COLUMN caller_hash TEXT")
+    if "is_test" not in _cols:
+        c.execute("ALTER TABLE rejected_quotes ADD COLUMN is_test INTEGER DEFAULT 0")
     c.commit()
     c.close()
 
@@ -57,16 +65,19 @@ def save_quote(qid, kind, claim, params, price_usd, price_units, expires):
     c.close()
 
 
-def save_rejected_quote(kind, claim, reason):
+def save_rejected_quote(kind, claim, reason, caller_hash=None, is_test=False):
     """Log a quote request we could not serve (unknown kind, missing claim).
-    Never raises; observability must not break the request path."""
+    caller_hash is a sha256 of IP + user-agent (privacy-friendly distinct-
+    caller counting). is_test marks our own/test traffic so it can be
+    excluded from the experiment. Never raises; observability must not
+    break the request path."""
     try:
         c = _conn()
         c.execute(
-            "INSERT INTO rejected_quotes(kind, claim, reason, created)"
-            " VALUES (?,?,?,?)",
+            "INSERT INTO rejected_quotes(kind, claim, reason, caller_hash,"
+            " is_test, created) VALUES (?,?,?,?,?,?)",
             (str(kind), None if claim is None else str(claim)[:500],
-             str(reason)[:200], now()),
+             str(reason)[:200], caller_hash, 1 if is_test else 0, now()),
         )
         c.commit()
         c.close()
